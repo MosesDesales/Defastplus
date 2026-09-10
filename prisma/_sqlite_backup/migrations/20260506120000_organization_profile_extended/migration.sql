@@ -1,0 +1,26 @@
+-- AlterTable: extend CompanyProfile for Organization Profile module
+ALTER TABLE "CompanyProfile" ADD COLUMN "billingStreet2" TEXT;
+ALTER TABLE "CompanyProfile" ADD COLUMN "industry" TEXT;
+ALTER TABLE "CompanyProfile" ADD COLUMN "phone" TEXT;
+ALTER TABLE "CompanyProfile" ADD COLUMN "fax" TEXT;
+ALTER TABLE "CompanyProfile" ADD COLUMN "websiteUrl" TEXT;
+ALTER TABLE "CompanyProfile" ADD COLUMN "pan" TEXT;
+ALTER TABLE "CompanyProfile" ADD COLUMN "companyIdentifier" TEXT;
+ALTER TABLE "CompanyProfile" ADD COLUMN "paymentAddressDifferent" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "CompanyProfile" ADD COLUMN "paymentStreet" TEXT;
+ALTER TABLE "CompanyProfile" ADD COLUMN "paymentStreet2" TEXT;
+ALTER TABLE "CompanyProfile" ADD COLUMN "paymentCity" TEXT;
+ALTER TABLE "CompanyProfile" ADD COLUMN "paymentState" TEXT;
+ALTER TABLE "CompanyProfile" ADD COLUMN "paymentZip" TEXT;
+ALTER TABLE "CompanyProfile" ADD COLUMN "contactName" TEXT;
+ALTER TABLE "CompanyProfile" ADD COLUMN "contactEmail" TEXT;
+ALTER TABLE "CompanyProfile" ADD COLUMN "smtpEnabled" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "CompanyProfile" ADD COLUMN "smtpHost" TEXT;
+ALTER TABLE "CompanyProfile" ADD COLUMN "smtpPort" INTEGER;
+ALTER TABLE "CompanyProfile" ADD COLUMN "reportBasis" TEXT NOT NULL DEFAULT 'ACCRUAL';
+ALTER TABLE "CompanyProfile" ADD COLUMN "timezone" TEXT NOT NULL DEFAULT 'Asia/Kolkata';
+ALTER TABLE "CompanyProfile" ADD COLUMN "dateFormat" TEXT NOT NULL DEFAULT 'dd/MM/yyyy';
+ALTER TABLE "CompanyProfile" ADD COLUMN "organizationLanguage" TEXT NOT NULL DEFAULT 'en';
+ALTER TABLE "CompanyProfile" ADD COLUMN "communicationLanguages" TEXT NOT NULL DEFAULT 'en';
+ALTER TABLE "CompanyProfile" ADD COLUMN "addressFormatNote" TEXT;
+ALTER TABLE "CompanyProfile" ADD COLUMN "prefWeekStartsMonday" INTEGER NOT NULL DEFAULT 1;

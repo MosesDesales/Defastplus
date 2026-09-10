@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ENVELOPE>
+  <BODY>
+    <DATA>
+      <TALLYMESSAGE>
+        <GROUP NAME="Current Assets">
+          <PARENT>Primary</PARENT>
+          <GUID>grp-ca-001</GUID>
+        </GROUP>
+        <GROUP NAME="Sundry Debtors">
+          <PARENT>Current Assets</PARENT>
+          <GUID>grp-sd-001</GUID>
+        </GROUP>
+        <GROUP NAME="Sales Accounts">
+          <PARENT>Primary</PARENT>
+          <GUID>grp-sales-001</GUID>
+        </GROUP>
+        <LEDGER NAME="Acme Customer">
+          <PARENT>Sundry Debtors</PARENT>
+          <GUID>led-acme-001</GUID>
+          <OPENINGBALANCE>5000</OPENINGBALANCE>
+          <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+          <PARTYGSTIN>27AAPFU0939F1ZV</PARTYGSTIN>
+        </LEDGER>
+        <LEDGER NAME="Sales">
+          <PARENT>Sales Accounts</PARENT>
+          <GUID>led-sales-001</GUID>
+          <OPENINGBALANCE>0</OPENINGBALANCE>
+          <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+        </LEDGER>
+        <VOUCHER VCHTYPE="Journal">
+          <DATE>20240401</DATE>
+          <VOUCHERNUMBER>JV-1</VOUCHERNUMBER>
+          <NARRATION>Opening adjustment</NARRATION>
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>Acme Customer</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+            <AMOUNT>1000</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>Sales</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+            <AMOUNT>1000</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>
+        </VOUCHER>
+      </TALLYMESSAGE>
+    </DATA>
+  </BODY>
+</ENVELOPE>

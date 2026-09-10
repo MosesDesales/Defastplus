@@ -1,0 +1,40 @@
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireApiPermission } from "@/lib/api-auth";
+import { writeAuditLog } from "@/lib/audit";
+import type { TeamMemberStatus } from "@prisma/client";
+
+type P = { params: Promise<{ id: string }> };
+
+export async function PATCH(request: Request, props: P) {
+  const session = await requireApiPermission("settings.users.edit");
+  if (session instanceof NextResponse) return session;
+  const { id } = await props.params;
+
+  let json: unknown;
+  try {
+    json = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const d = json as { status?: TeamMemberStatus; roleId?: string | null; name?: string };
+
+  const existing = await prisma.teamMember.findFirst({
+    where: { id, ownerUserId: session.sub },
+  });
+  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  await prisma.teamMember.update({
+    where: { id },
+    data: {
+      ...(d.status !== undefined ? { status: d.status } : {}),
+      ...(d.roleId !== undefined ? { appRoleId: d.roleId || null } : {}),
+      ...(d.name !== undefined ? { name: d.name.trim() } : {}),
+    },
+  });
+
+  await writeAuditLog(session.sub, "UPDATE_USER", "TeamMember", id);
+
+  return NextResponse.json({ ok: true });
+}
