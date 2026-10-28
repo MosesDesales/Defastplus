@@ -4,6 +4,7 @@ import { requireApiPermission } from "@/lib/api-auth";
 import { listEWayBills } from "@/lib/eway/service";
 import { EWAY_STATUS_LABELS, EWAY_DOCUMENT_TYPE_LABELS } from "@/lib/eway/constants";
 import { buildLinesDocumentPdf } from "@/lib/pdf/generic-lines-pdf";
+import { loadCompanyForUser } from "@/lib/documents/load-invoice-document";
 import type { EWayBillStatus } from "@prisma/client";
 
 /** GET /api/gst/eway-bills/reports?type=summary&format=csv|xlsx|pdf */
@@ -118,6 +119,7 @@ export async function GET(request: Request) {
       ],
       columns,
       rows: tableRows,
+      company: await loadCompanyForUser(session.sub),
     });
     return new NextResponse(new Uint8Array(pdf), {
       headers: {

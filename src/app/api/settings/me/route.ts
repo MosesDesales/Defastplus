@@ -50,6 +50,7 @@ export async function PATCH(request: Request) {
     email: updated.email,
     name: updated.name,
     permissions,
+    sessionVersion: updated.sessionVersion,
   });
 
   const res = NextResponse.json({ ok: true, user: { name: updated.name, email: updated.email } });

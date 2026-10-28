@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireApiPermission } from "@/lib/api-auth";
 import { writeAuditLog } from "@/lib/audit";
+import { getPlanLimits } from "@/lib/superadmin/service";
 
 /** GET / POST team roster (invite-style users — no separate login in MVP). */
 export async function GET() {
@@ -41,6 +42,18 @@ export async function POST(request: Request) {
   const email = d.email?.trim().toLowerCase();
   const name = d.name?.trim();
   if (!email || !name) return NextResponse.json({ error: "Email and name required" }, { status: 400 });
+
+  const limits = await getPlanLimits(session.sub);
+  if (limits?.maxUsers != null) {
+    const seats =
+      (await prisma.teamMember.count({ where: { ownerUserId: session.sub, status: { not: "INACTIVE" } } })) + 1;
+    if (seats >= limits.maxUsers) {
+      return NextResponse.json(
+        { error: `Your ${limits.name} plan allows ${limits.maxUsers} user${limits.maxUsers === 1 ? "" : "s"}. Upgrade to add more.` },
+        { status: 403 },
+      );
+    }
+  }
 
   const row = await prisma.teamMember.create({
     data: {

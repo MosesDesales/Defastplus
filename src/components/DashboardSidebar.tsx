@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { ComponentProps } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   ArrowDownLeft,
@@ -122,11 +123,20 @@ const MODULE_BOTTOM_ICONS: Record<string, LucideIcon> = {
   "/dashboard/documents": Files,
 };
 
+/** Hides links to modules the Super User has not assigned (the proxy also blocks them). */
+function NavLink(props: ComponentProps<typeof Link>) {
+  const { canAccess } = useOrganizationModuleSettings();
+  return typeof props.href === "string" && !canAccess(props.href) ? null : <Link {...props} />;
+}
+
 export function DashboardSidebar() {
   const pathname = usePathname();
-  const { settings } = useOrganizationModuleSettings();
+  const { settings, canAccess } = useOrganizationModuleSettings();
 
-  const salesModules = useMemo(() => salesModulesForSettings(settings), [settings]);
+  const salesModules = useMemo(
+    () => salesModulesForSettings(settings).filter((s) => canAccess(hrefForSalesSlug(s.slug))),
+    [settings, canAccess],
+  );
 
   const purchasesModules = useMemo(
     () =>
@@ -136,8 +146,8 @@ export function DashboardSidebar() {
         if (m.slug === "recurring-bills") return settings.recurringBillsEnabled;
         if (m.slug === "vendor-credits") return settings.vendorCreditEnabled;
         return true;
-      }),
-    [settings],
+      }).filter((m) => canAccess(`/dashboard/purchases/${m.slug}`)),
+    [settings, canAccess],
   );
 
   const accountingModules = useMemo(
@@ -147,8 +157,8 @@ export function DashboardSidebar() {
         if (m.slug === "recurring-journals") return settings.recurringJournalEnabled;
         if (m.slug === "fixed-assets" || m.slug === "depreciation") return settings.fixedAssetsEnabled;
         return true;
-      }),
-    [settings],
+      }).filter((m) => canAccess(hrefForAccountingSlug(m.slug))),
+    [settings, canAccess],
   );
 
   const inventoryModules = useMemo(
@@ -157,8 +167,8 @@ export function DashboardSidebar() {
         if (!settings.inventoryEnabled) return false;
         if (m.slug === "warehouses") return settings.warehousesEnabled;
         return true;
-      }),
-    [settings],
+      }).filter((m) => canAccess(hrefForInventorySlug(m.slug))),
+    [settings, canAccess],
   );
 
   const bottomModules = useMemo(
@@ -168,8 +178,8 @@ export function DashboardSidebar() {
         if (m.href === "/dashboard/tasks") return false;
         if (m.href === "/dashboard/documents") return settings.ocrEnabled;
         return true;
-      }),
-    [settings],
+      }).filter((m) => canAccess(m.href)),
+    [settings, canAccess],
   );
 
   const accountingActive = pathname.startsWith("/dashboard/accounting");
@@ -328,7 +338,7 @@ export function DashboardSidebar() {
           Home
         </Link>
 
-        {settings.inventoryEnabled ? (
+        {settings.inventoryEnabled && inventoryModules.length > 0 ? (
         <div className="pt-2">
           <div className="flex items-stretch overflow-hidden rounded-lg">
             <Link href="/dashboard/inventory" className={parentRowClass(pathname === "/dashboard/inventory")}>
@@ -362,7 +372,7 @@ export function DashboardSidebar() {
         </div>
         ) : null}
 
-        <div className="pt-2">
+        <div className={salesModules.length > 0 ? "pt-2" : "hidden"}>
           <div className="flex items-stretch overflow-hidden rounded-lg">
             <Link href="/dashboard/sales" className={parentRowClass(pathname === "/dashboard/sales")}>
               <ShoppingCart className={iconClass} aria-hidden />
@@ -394,7 +404,7 @@ export function DashboardSidebar() {
           ) : null}
         </div>
 
-        <div>
+        <div className={purchasesModules.length > 0 ? "" : "hidden"}>
           <div className="flex items-stretch overflow-hidden rounded-lg">
             <Link href="/dashboard/purchases" className={parentRowClass(pathname === "/dashboard/purchases")}>
               <Truck className={iconClass} aria-hidden />
@@ -426,7 +436,7 @@ export function DashboardSidebar() {
           ) : null}
         </div>
 
-        <div className="pt-2">
+        <div className={accountingModules.length > 0 ? "pt-2" : "hidden"}>
           <div className="flex items-stretch overflow-hidden rounded-lg">
             <Link href="/dashboard/accounting" className={parentRowClass(pathname === "/dashboard/accounting")}>
               <Calculator className={iconClass} aria-hidden />
@@ -458,7 +468,7 @@ export function DashboardSidebar() {
           ) : null}
         </div>
 
-        <div className="pt-2">
+        <div className={canAccess("/dashboard/gst") ? "pt-2" : "hidden"}>
           <div className="flex items-stretch overflow-hidden rounded-lg">
             <Link href="/dashboard/gst" className={parentRowClass(pathname === "/dashboard/gst")}>
               <BadgePercent className={iconClass} aria-hidden />
@@ -476,23 +486,23 @@ export function DashboardSidebar() {
           </div>
           {gstOpen ? (
             <div className="mt-0.5 flex flex-col gap-0.5 border-l border-slate-200 py-1 pl-1 dark:border-slate-700">
-              <Link href="/dashboard/gst/gstr-2a" className={nestedLinkClass("/dashboard/gst/gstr-2a")}>
+              <NavLink href="/dashboard/gst/gstr-2a" className={nestedLinkClass("/dashboard/gst/gstr-2a")}>
                 <FileSpreadsheet className={iconClass} aria-hidden />
                 GSTR-2A
-              </Link>
-              <Link href="/dashboard/gst/gstr-3b" className={nestedLinkClass("/dashboard/gst/gstr-3b")}>
+              </NavLink>
+              <NavLink href="/dashboard/gst/gstr-3b" className={nestedLinkClass("/dashboard/gst/gstr-3b")}>
                 <Landmark className={iconClass} aria-hidden />
                 GSTR-3B
-              </Link>
-              <Link href="/dashboard/gst/eway-bills" className={nestedLinkClass("/dashboard/gst/eway-bills")}>
+              </NavLink>
+              <NavLink href="/dashboard/gst/eway-bills" className={nestedLinkClass("/dashboard/gst/eway-bills")}>
                 <Truck className={iconClass} aria-hidden />
                 E-Way Bills
-              </Link>
+              </NavLink>
             </div>
           ) : null}
         </div>
 
-        <div className="pt-2">
+        <div className={canAccess("/dashboard/hr") ? "pt-2" : "hidden"}>
           <div className="flex items-stretch overflow-hidden rounded-lg">
             <Link href="/dashboard/hr" className={parentRowClass(pathname === "/dashboard/hr")}>
               <Briefcase className={iconClass} aria-hidden />
@@ -510,25 +520,25 @@ export function DashboardSidebar() {
           </div>
           {hrOpen ? (
             <div className="mt-0.5 flex flex-col gap-0.5 border-l border-slate-200 py-1 pl-1 dark:border-slate-700">
-              <Link href="/dashboard/hr/employees" className={nestedLinkClass("/dashboard/hr/employees")}>
+              <NavLink href="/dashboard/hr/employees" className={nestedLinkClass("/dashboard/hr/employees")}>
                 <Users className={iconClass} aria-hidden />
                 Employees
-              </Link>
-              <Link href="/dashboard/hr/leave" className={nestedLinkClass("/dashboard/hr/leave")}>
+              </NavLink>
+              <NavLink href="/dashboard/hr/leave" className={nestedLinkClass("/dashboard/hr/leave")}>
                 <CalendarDays className={iconClass} aria-hidden />
                 Leave
-              </Link>
+              </NavLink>
               {settings.payrollEnabled ? (
-                <Link href="/dashboard/hr/payroll" className={nestedLinkClass("/dashboard/hr/payroll")}>
+                <NavLink href="/dashboard/hr/payroll" className={nestedLinkClass("/dashboard/hr/payroll")}>
                   <ClipboardList className={iconClass} aria-hidden />
                   Payroll
-                </Link>
+                </NavLink>
               ) : null}
             </div>
           ) : null}
         </div>
 
-        {settings.timeTrackingEnabled ? (
+        {settings.timeTrackingEnabled && canAccess("/time-tracking") ? (
           <div className="pt-2">
             <div className="flex items-stretch overflow-hidden rounded-lg">
               <Link href="/time-tracking" className={parentRowClass(timeTrackingActive)}>
@@ -580,7 +590,7 @@ export function DashboardSidebar() {
           </div>
         ) : null}
 
-        {settings.tasksEnabled ? (
+        {settings.tasksEnabled && canAccess("/tasks") ? (
           <div className="pt-2">
             <div className="flex items-stretch overflow-hidden rounded-lg">
               <Link href="/tasks" className={parentRowClass(tasksActive)}>
@@ -632,7 +642,7 @@ export function DashboardSidebar() {
           </div>
         ) : null}
 
-        <div className="pt-2">
+        <div className={canAccess("/dashboard/integrations") ? "pt-2" : "hidden"}>
           <div className="flex items-stretch overflow-hidden rounded-lg">
             <Link href="/dashboard/integrations" className={parentRowClass(integrationsActive)}>
               <Plug className={iconClass} aria-hidden />
@@ -656,28 +666,28 @@ export function DashboardSidebar() {
                     Books
                   </p>
                   {settings.tallyEnabled ? (
-                    <Link href="/dashboard/integrations/tally" className={nestedLinkClass("/dashboard/integrations/tally")}>
+                    <NavLink href="/dashboard/integrations/tally" className={nestedLinkClass("/dashboard/integrations/tally")}>
                       <FileSpreadsheet className={iconClass} aria-hidden />
                       Tally Integration
-                    </Link>
+                    </NavLink>
                   ) : null}
                   {settings.zohoBooksEnabled ? (
-                    <Link
+                    <NavLink
                       href="/dashboard/integrations/zoho-books"
                       className={nestedLinkClass("/dashboard/integrations/zoho-books")}
                     >
                       <BookOpen className={iconClass} aria-hidden />
                       Zoho Books Integration
-                    </Link>
+                    </NavLink>
                   ) : null}
                   {settings.quickbooksEnabled ? (
-                    <Link
+                    <NavLink
                       href="/dashboard/integrations/quickbooks"
                       className={nestedLinkClass("/dashboard/integrations/quickbooks")}
                     >
                       <Landmark className={iconClass} aria-hidden />
                       QuickBooks Integration
-                    </Link>
+                    </NavLink>
                   ) : null}
                 </>
               ) : (
@@ -711,29 +721,29 @@ export function DashboardSidebar() {
                 <SlidersHorizontal className={iconClass} aria-hidden />
                 General
               </Link>
-              <Link href="/settings/profile" className={nestedLinkClass("/settings/profile")}>
+              <NavLink href="/settings/profile" className={nestedLinkClass("/settings/profile")}>
                 <Building2 className={iconClass} aria-hidden />
                 Profile
-              </Link>
-              <Link href="/dashboard/settings/users" className={nestedLinkClass("/dashboard/settings/users")}>
+              </NavLink>
+              <NavLink href="/dashboard/settings/users" className={nestedLinkClass("/dashboard/settings/users")}>
                 <Users className={iconClass} aria-hidden />
                 Users
-              </Link>
-              <Link href="/dashboard/settings/roles" className={nestedLinkClass("/dashboard/settings/roles")}>
+              </NavLink>
+              <NavLink href="/dashboard/settings/roles" className={nestedLinkClass("/dashboard/settings/roles")}>
                 <Shield className={iconClass} aria-hidden />
                 Roles
-              </Link>
-              <Link
+              </NavLink>
+              <NavLink
                 href="/dashboard/settings/taxes/gst"
                 className={nestedLinkClass("/dashboard/settings/taxes/gst")}
               >
                 <BadgePercent className={iconClass} aria-hidden />
                 Taxes
-              </Link>
-              <Link href="/settings/templates" className={nestedLinkClass("/settings/templates")}>
+              </NavLink>
+              <NavLink href="/settings/templates" className={nestedLinkClass("/settings/templates")}>
                 <LayoutTemplate className={iconClass} aria-hidden />
                 PDF templates
-              </Link>
+              </NavLink>
             </div>
           ) : null}
         </div>

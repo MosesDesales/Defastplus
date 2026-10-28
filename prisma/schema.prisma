@@ -295,6 +295,66 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
+  @@index([entity, entityId, createdAt])
+}
+
+enum BillingInterval {
+  MONTHLY
+  ANNUAL
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+/// SaaS plan catalogue. Prices are INR and exclusive of GST.
+model SubscriptionPlan {
+  id           String   @id @default(cuid())
+  code         String   @unique
+  name         String
+  description  String?
+  monthlyPrice Decimal  @default(0)
+  annualPrice  Decimal  @default(0)
+  isFree       Boolean  @default(false)
+  trialDays    Int      @default(0)
+  /// null = unlimited. Counts the account owner plus team members.
+  maxUsers     Int?
+  /// null = unlimited.
+  maxCompanies Int?
+  /// Module keys; ["*"] grants every available module.
+  modules      String[] @default([])
+  features     String[] @default([])
+  isActive     Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  subscriptions UserSubscription[]
+}
+
+/// Current plan of a user. No row = legacy account with unrestricted access.
+model UserSubscription {
+  id              String             @id @default(cuid())
+  userId          String             @unique
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId          String
+  plan            SubscriptionPlan   @relation(fields: [planId], references: [id], onDelete: Restrict)
+  status          SubscriptionStatus @default(ACTIVE)
+  billingInterval BillingInterval    @default(MONTHLY)
+  /// Price for one billing interval (INR, excl. GST) agreed at the time of the change.
+  amount          Decimal            @default(0)
+  startsAt        DateTime           @default(now())
+  expiresAt       DateTime?
+  trialEndsAt     DateTime?
+  changedById     String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([planId])
+  @@index([status])
 }
 
 model BankStatementImport {
@@ -430,6 +490,14 @@ model CompanyProfile {
   prefWeekStartsMonday Boolean @default(true)
 
   /// Settings → Taxes → GST (India)
+  /// Printed on invoices and quotes so customers know where to pay.
+  bankAccountName   String?
+  bankName          String?
+  bankAccountNumber String?
+  bankIfsc          String?
+  bankBranch        String?
+  bankUpiId         String?
+
   gstRegistered              Boolean   @default(true)
   gstRegistrationType        String?
   gstBusinessLegalName       String?
@@ -2027,6 +2095,20 @@ model User {
   permissions  String   @default("[\"*\"]")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  /// Platform administrator (Super User dashboard). Never granted through the app UI.
+  isSuperUser            Boolean   @default(false)
+  /// Deactivated users cannot sign in; their accounting data is kept.
+  isActive               Boolean   @default(true)
+  deactivatedAt          DateTime?
+  lastLoginAt            DateTime?
+  /// Bumped to invalidate every session token issued before (deactivation, forced sign-out).
+  sessionVersion         Int       @default(0)
+  /// false = every module the plan allows; true = only `assignedModules` (still capped by the plan).
+  moduleAccessRestricted Boolean   @default(false)
+  /// Module keys from `src/lib/superadmin/modules.ts`.
+  assignedModules        String[]  @default([])
+  subscription           UserSubscription?
 
   items           Item[]
   itemCategories     ItemCategory[]

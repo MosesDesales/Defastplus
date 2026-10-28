@@ -473,6 +473,49 @@ export function OrganizationProfileClient() {
           ) : null}
         </Card>
 
+        {/* Bank details — printed on invoices, quotes and credit notes */}
+        <Card title="Bank details" subtitle="Printed on invoices and quotes so customers know where to pay.">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label>
+              <span className={labelBase}>Account holder name</span>
+              <input value={org.bankAccountName} onChange={(e) => set("bankAccountName", e.target.value)} className={inputBase} />
+            </label>
+            <label>
+              <span className={labelBase}>Bank name</span>
+              <input value={org.bankName} onChange={(e) => set("bankName", e.target.value)} className={inputBase} placeholder="e.g. HDFC Bank" />
+            </label>
+            <label>
+              <span className={labelBase}>Account number</span>
+              <input
+                value={org.bankAccountNumber}
+                onChange={(e) => set("bankAccountNumber", e.target.value)}
+                className={inputBase}
+                inputMode="numeric"
+                autoComplete="off"
+              />
+            </label>
+            <label>
+              <span className={labelBase}>IFSC</span>
+              <input
+                value={org.bankIfsc}
+                onChange={(e) => set("bankIfsc", e.target.value.toUpperCase())}
+                className={inputBase}
+                maxLength={11}
+                placeholder="HDFC0001234"
+              />
+            </label>
+            <label>
+              <span className={labelBase}>Branch</span>
+              <input value={org.bankBranch} onChange={(e) => set("bankBranch", e.target.value)} className={inputBase} />
+            </label>
+            <label>
+              <span className={labelBase}>UPI ID</span>
+              <input value={org.bankUpiId} onChange={(e) => set("bankUpiId", e.target.value)} className={inputBase} placeholder="business@upi" />
+            </label>
+          </div>
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Leave the account number blank to hide bank details on documents.</p>
+        </Card>
+
         {/* 3. Contact & email */}
         <Card title="Contact & email settings" subtitle="Primary contact and how outbound email is sent.">
           <div className="grid gap-4 sm:grid-cols-2">

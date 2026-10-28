@@ -12,6 +12,8 @@ import { extractRawTextFromDocument } from "@/lib/ocr/extract-text";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_PARSE_ROWS = 5000;
+/** Rows sent to the mapping step (must stay within the parse API's table limit). */
+const MAX_TABLE_ROWS = 5000;
 
 export type BankStatementFileKind = "csv" | "xlsx" | "xls" | "pdf" | "image";
 
@@ -135,7 +137,8 @@ export async function extractBankStatementFromBuffer(
     const lines = text.split(/\r?\n/).filter(Boolean);
     const delim = lines[0] ? detectCsvDelim(lines[0]) : ",";
     const previewRows = lines.slice(0, 11).map((ln) => splitCsvLine(ln, delim));
-    const sampleLines = lines.slice(0, 201);
+    // Full table (capped) so the column-mapping step covers every row, same as Excel.
+    const sampleLines = lines.slice(0, MAX_TABLE_ROWS);
     const tableSample = sampleLines.map((ln) => splitCsvLine(ln, delim));
     const autoParsed = trimParsed(parseBankStatementCsv(text));
     if (!autoParsed.length) warnings.push("No transactions parsed — try column mapping or check the export format.");
@@ -162,20 +165,20 @@ export async function extractBankStatementFromBuffer(
     const si = Math.min(Math.max(0, opts?.sheetIndex ?? 0), names.length - 1);
     const first = names[si]!;
     const sheet = wb.Sheets[first]!;
-    const matrix = sheetToMatrix(sheet, 4000);
+    const matrix = sheetToMatrix(sheet, MAX_TABLE_ROWS);
     const headerIdx = suggestHeaderRow(matrix);
     const joined = matrix.slice(0, 15).flat().join("\n");
     base.suggestedBank = detectBankFormat(joined);
     return {
       ...base,
       tablePreview: matrix.slice(0, 10),
-      tableSample: matrix.slice(0, 2500),
+      tableSample: matrix,
       rawTextPreview: null,
       autoParsed: [],
       csvFullText: null,
       warnings:
-        matrix.length >= 4000
-          ? [...warnings, "Only the first 4000 rows were loaded — split very large sheets if needed."]
+        matrix.length >= MAX_TABLE_ROWS
+          ? [...warnings, `Only the first ${MAX_TABLE_ROWS} rows were loaded — split very large sheets if needed.`]
           : warnings,
     };
   }

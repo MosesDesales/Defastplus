@@ -44,6 +44,7 @@ export async function POST(request: Request) {
       email: user.email,
       name: user.name,
       permissions,
+      sessionVersion: user.sessionVersion,
     });
 
     const res = NextResponse.json({

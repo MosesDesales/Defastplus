@@ -35,6 +35,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
   }
 
+  // Checked only after the password matches so the response does not reveal account state.
+  if (!user.isActive) {
+    return NextResponse.json(
+      { error: "This account has been deactivated. Contact your administrator." },
+      { status: 403 },
+    );
+  }
+
+  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+
   const permissions = parsePermissionsJson(user.permissions);
 
   const token = await signSession({
@@ -42,10 +52,12 @@ export async function POST(request: Request) {
     email: user.email,
     name: user.name,
     permissions,
+    sessionVersion: user.sessionVersion,
   });
 
   const res = NextResponse.json({
     user: { id: user.id, email: user.email, name: user.name },
+    redirectTo: user.isSuperUser ? "/superadmin" : "/dashboard",
   });
   res.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,

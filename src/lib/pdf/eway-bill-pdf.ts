@@ -1,88 +1,211 @@
-import type { EWayBill, EWayBillLine, Customer } from "@prisma/client";
-import { pdfBufferFromDoc } from "@/lib/pdf/simple-pdf";
-import { fmtMoney } from "@/lib/documents/invoice-pdf-data";
+import type { Customer, EWayBill, EWayBillLine } from "@prisma/client";
+import QRCode from "qrcode";
+import { docCompany, fmtDocDate, type CompanyForDocs } from "@/lib/documents/business-document";
 import { EWAY_DOCUMENT_TYPE_LABELS, EWAY_STATUS_LABELS, EWAY_TRANSPORT_MODE_LABELS } from "@/lib/eway/constants";
+import { stateNameFromCode } from "@/lib/eway/state-codes";
+import {
+  BODY_LIMIT,
+  CONT_TOP,
+  CONTENT_W,
+  M,
+  RIGHT,
+  drawBrandHeader,
+  fmtQty,
+  installContinuationHeader,
+  keyValueCard,
+  loadLogo,
+  makeTheme,
+  makeWriter,
+  money,
+  renderPdf,
+  stampPageChrome,
+} from "@/lib/pdf/pdf-kit";
 
 type BillWithLines = EWayBill & {
   lines: EWayBillLine[];
   customer?: Pick<Customer, "displayName"> | null;
 };
 
-export async function buildEWayBillPdf(bill: BillWithLines): Promise<Buffer> {
-  return pdfBufferFromDoc((doc) => {
-    doc.fontSize(18).text("E-Way Bill", { align: "center" });
-    doc.moveDown(0.5);
-    doc.fontSize(10).fillColor("#444").text("Generated via FAST Accounting", { align: "center" }).fillColor("#000");
-    doc.moveDown();
+const fmtDateTime = (d: Date) =>
+  new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }).format(d);
 
-    doc.fontSize(12).text(`EBN: ${bill.ewayBillNumber ?? "— (not generated)"}`);
-    doc.fontSize(9).text(`Status: ${EWAY_STATUS_LABELS[bill.status]}`);
-    if (bill.validUntil) doc.text(`Valid until: ${bill.validUntil.toLocaleString("en-IN")}`);
-    doc.moveDown();
+const SUPPLY_TYPES: Record<string, string> = { O: "Outward", I: "Inward" };
 
-    doc.fontSize(11).text("Document", { underline: true });
-    doc.fontSize(9);
-    doc.text(`Type: ${EWAY_DOCUMENT_TYPE_LABELS[bill.documentType]}`);
-    doc.text(`Number: ${bill.sourceDocumentNumber}`);
-    doc.text(`Date: ${bill.sourceDocumentDate.toLocaleDateString("en-IN")}`);
-    doc.text(`Value: ${fmtMoney(Number(bill.documentValue))}`);
-    doc.moveDown();
+/** "123412341234" → "1234 1234 1234" */
+const groupEbn = (ebn: string) => ebn.replace(/\s+/g, "").replace(/(\d{4})(?=\d)/g, "$1 ");
 
-    doc.fontSize(11).text("Consignor (Supplier)", { underline: true });
-    doc.fontSize(9);
-    doc.text(bill.supplierName);
-    if (bill.supplierGstin) doc.text(`GSTIN: ${bill.supplierGstin}`);
-    if (bill.supplierAddress) doc.text(bill.supplierAddress);
-    doc.text(`State: ${bill.supplierStateCode ?? "—"} · Pin: ${bill.supplierPincode ?? "—"}`);
-    doc.moveDown();
+function stateLabel(code: string | null | undefined) {
+  if (!code) return "—";
+  const name = stateNameFromCode(code);
+  return name ? `${name} (${code})` : code;
+}
 
-    doc.fontSize(11).text("Consignee (Recipient)", { underline: true });
-    doc.fontSize(9);
-    doc.text(bill.recipientName);
-    if (bill.recipientGstin) doc.text(`GSTIN: ${bill.recipientGstin}`);
-    if (bill.recipientAddress) doc.text(bill.recipientAddress);
-    doc.text(`State: ${bill.recipientStateCode ?? "—"} · Pin: ${bill.recipientPincode ?? "—"}`);
-    doc.moveDown();
+export async function buildEWayBillPdf(bill: BillWithLines, companyRow?: CompanyForDocs | null): Promise<Buffer> {
+  const company = docCompany(companyRow ?? null);
+  const logo = await loadLogo(company.logoUrl);
+  const ebn = bill.ewayBillNumber?.trim() || null;
+  const qrText = bill.qrCodeData?.trim() || (ebn ? [ebn, bill.supplierGstin ?? "", bill.generatedAt?.toISOString() ?? ""].join("/") : null);
+  const qr = qrText ? await QRCode.toBuffer(qrText, { errorCorrectionLevel: "M", margin: 1, width: 360 }) : null;
+  const ref = ebn ? `EBN ${groupEbn(ebn)}` : `Draft · ${bill.sourceDocumentNumber}`;
 
-    doc.fontSize(11).text("Transport", { underline: true });
-    doc.fontSize(9);
-    doc.text(`Mode: ${EWAY_TRANSPORT_MODE_LABELS[bill.transportMode]}`);
-    doc.text(`Vehicle: ${bill.vehicleNumber ?? "—"}`);
-    doc.text(`Distance: ${bill.distanceKm ?? "—"} km`);
-    if (bill.transporterName) doc.text(`Transporter: ${bill.transporterName}`);
-    if (bill.transporterGstin) doc.text(`Transporter GSTIN: ${bill.transporterGstin}`);
-    doc.moveDown();
+  return renderPdf({ Title: `E-Way Bill ${ebn ?? bill.sourceDocumentNumber}`, Author: company.name }, (doc, F) => {
+    const T = makeTheme();
+    const base = 9;
+    const w = makeWriter(doc, F, T, base);
+    const { put, hline, label, ensureSpace, measure } = w;
+    const removeHeader = installContinuationHeader(doc, w, { logo, companyName: company.name, gstin: company.gstin, title: "E-WAY BILL", number: ref });
 
-    doc.fontSize(11).text("Items", { underline: true });
-    doc.fontSize(8);
-    let y = doc.y + 4;
-    const headers = ["Product", "HSN", "Qty", "Taxable"];
-    const widths = [220, 60, 50, 80];
-    let x = 50;
-    headers.forEach((h, i) => {
-      doc.text(h, x, y, { width: widths[i], continued: i < headers.length - 1 });
-      x += widths[i]!;
+    let y = drawBrandHeader(doc, w, {
+      logo,
+      company,
+      right: (rx, rw, top) => {
+        let ry = put("E-WAY BILL", rx, top - 2, { font: F.bold, size: 20, color: T.primary, width: rw, align: "right", spacing: 0.6 });
+        ry = put(EWAY_STATUS_LABELS[bill.status], rx, ry, { font: F.medium, size: 7.5, color: T.muted, width: rw, align: "right" });
+        ry = put("E-Way Bill No.", rx, ry + 8, { size: 7.5, color: T.muted, width: rw, align: "right" });
+        return put(ebn ? groupEbn(ebn) : "Not generated", rx, ry, { font: F.bold, size: 14, width: rw, align: "right" });
+      },
     });
+
+    // Summary card with QR code
+    const qrSize = 104;
+    const sumRows: [string, string][] = [
+      ["E-Way Bill No.", ebn ? groupEbn(ebn) : "—"],
+      ["Generated On", bill.generatedAt ? fmtDateTime(bill.generatedAt) : "—"],
+      ["Valid Until", bill.validUntil ? fmtDateTime(bill.validUntil) : "—"],
+      ["Generated By", bill.supplierGstin ?? "—"],
+      ["Approx. Distance", bill.distanceKm != null ? `${bill.distanceKm} km` : "—"],
+      ...(bill.apiAckNo ? ([["Acknowledgement No.", bill.apiAckNo]] as [string, string][]) : []),
+    ];
+    const sumW = qr ? CONTENT_W - qrSize - 14 : CONTENT_W;
+    const sumH = Math.max(keyValueCard(doc, w, { x: M, y, width: sumW, title: "Summary", rows: sumRows, keyW: 110, size: base, draw: false }), qr ? qrSize + 14 : 0);
+    keyValueCard(doc, w, { x: M, y, width: sumW, title: "Summary", rows: sumRows, keyW: 110, size: base, fill: T.soft, minH: sumH });
+    if (qr) {
+      const qx = RIGHT - qrSize;
+      doc.save().roundedRect(qx, y, qrSize, sumH, 6).lineWidth(0.8).stroke(T.line).restore();
+      doc.image(qr, qx + 8, y + 8, { width: qrSize - 16, height: qrSize - 16 });
+      put("Scan to verify", qx, y + qrSize - 4, { size: 6.5, color: T.muted, width: qrSize, align: "center" });
+    }
+    y += sumH + 18;
+
+    // Part A
+    label("Part A — Document & Parties", M, y);
     y += 14;
-    for (const line of bill.lines) {
-      x = 50;
-      const cells = [
-        line.productName.slice(0, 60),
-        line.hsnCode ?? "—",
-        `${Number(line.quantity)} ${line.unit}`,
-        fmtMoney(Number(line.taxableValue)),
-      ];
-      cells.forEach((c, i) => {
-        doc.text(c, x, y, { width: widths[i], continued: i < cells.length - 1 });
-        x += widths[i]!;
+    const gap = 12;
+    const cardW = (CONTENT_W - gap) / 2;
+    const docRows: [string, string][] = [
+      ["Type", EWAY_DOCUMENT_TYPE_LABELS[bill.documentType]],
+      ["Number", bill.sourceDocumentNumber],
+      ["Date", fmtDocDate(bill.sourceDocumentDate)],
+      ["Value", `${F.rupee} ${money(Number(bill.documentValue))}`],
+    ];
+    const supplyRows: [string, string][] = [
+      ["Supply Type", [SUPPLY_TYPES[bill.supplyType ?? ""] ?? bill.supplyType, bill.subSupplyType].filter(Boolean).join(" · ") || "—"],
+      ["Transaction", bill.transactionType],
+      ["Place of Supply", stateLabel(bill.placeOfSupply ?? bill.recipientStateCode)],
+    ];
+    const dh = Math.max(
+      keyValueCard(doc, w, { x: M, y, width: cardW, title: "Document", rows: docRows, keyW: 70, size: base, draw: false }),
+      keyValueCard(doc, w, { x: M, y, width: cardW, title: "Supply", rows: supplyRows, keyW: 90, size: base, draw: false }),
+    );
+    keyValueCard(doc, w, { x: M, y, width: cardW, title: "Document", rows: docRows, keyW: 70, size: base, minH: dh });
+    keyValueCard(doc, w, { x: M + cardW + gap, y, width: cardW, title: "Supply", rows: supplyRows, keyW: 90, size: base, minH: dh });
+    y += dh + 12;
+
+    const party = (name: string, gstin: string | null, addr: string | null, state: string | null, pin: string | null): [string, string][] => [
+      ["Name", name],
+      ["GSTIN", gstin ?? "URP (unregistered)"],
+      ["Address", addr ?? "—"],
+      ["State", stateLabel(state)],
+      ["PIN Code", pin ?? "—"],
+    ];
+    const from = party(bill.supplierName, bill.supplierGstin, bill.supplierAddress, bill.supplierStateCode, bill.supplierPincode);
+    const to = party(bill.recipientName, bill.recipientGstin, bill.recipientAddress, bill.recipientStateCode, bill.recipientPincode);
+    const ph = Math.max(
+      keyValueCard(doc, w, { x: M, y, width: cardW, title: "From (Consignor)", rows: from, keyW: 64, size: base, draw: false }),
+      keyValueCard(doc, w, { x: M, y, width: cardW, title: "To (Consignee)", rows: to, keyW: 64, size: base, draw: false }),
+    );
+    y = ensureSpace(y, ph);
+    keyValueCard(doc, w, { x: M, y, width: cardW, title: "From (Consignor)", rows: from, keyW: 64, size: base, minH: ph });
+    keyValueCard(doc, w, { x: M + cardW + gap, y, width: cardW, title: "To (Consignee)", rows: to, keyW: 64, size: base, minH: ph });
+    y += ph + 18;
+
+    // Goods
+    const cols = [
+      { label: "#", w: 24, align: "center" as const },
+      { label: "Product", w: 0, align: "left" as const },
+      { label: "HSN", w: 56, align: "left" as const },
+      { label: "Quantity", w: 70, align: "right" as const },
+      { label: "Taxable Value", w: 78, align: "right" as const },
+      { label: "Tax Rate", w: 84, align: "right" as const },
+    ];
+    cols[1]!.w = CONTENT_W - cols.reduce((s, c) => s + c.w, 0);
+    const headH = 24;
+    const drawHead = (at: number) => {
+      doc.save().rect(M, at, CONTENT_W, headH).fill(T.tableHead).restore();
+      let x = M;
+      for (const c of cols) {
+        put(c.label.toUpperCase(), x + 5, at + 8.5, { font: F.semibold, size: 6.6, color: T.primaryDark, width: c.w - 10, align: c.align, spacing: 0.3, oneLine: true });
+        x += c.w;
+      }
+      return at + headH;
+    };
+    y = ensureSpace(y, 30 + headH + 40);
+    label("Goods", M, y);
+    y = drawHead(y + 14);
+    bill.lines.forEach((l, i) => {
+      const rate =
+        Number(l.igstRate) > 0
+          ? `IGST ${Number(l.igstRate)}%`
+          : Number(l.cgstRate) + Number(l.sgstRate) > 0
+            ? `C ${Number(l.cgstRate)}% + S ${Number(l.sgstRate)}%`
+            : "Nil";
+      const cess = Number(l.cessRate) > 0 ? `Cess ${Number(l.cessRate)}%` : null;
+      const vals = [String(i + 1), l.productName, l.hsnCode ?? "—", `${fmtQty(Number(l.quantity))} ${l.unit}`, money(Number(l.taxableValue)), rate];
+      const descH = measure(l.productName, F.medium, base - 1, cols[1]!.w - 10);
+      const rowH = Math.max(descH, cess ? 2 * base + 2 : base) + 14;
+      if (y + rowH > BODY_LIMIT) {
+        doc.addPage();
+        y = drawHead(CONT_TOP);
+      }
+      if (i % 2 === 1) doc.save().rect(M, y, CONTENT_W, rowH).fill(T.stripe).restore();
+      let x = M;
+      cols.forEach((c, ci) => {
+        if (ci === 1) put(vals[ci]!, x + 5, y + 7, { font: F.medium, size: base - 1, width: c.w - 10 });
+        else put(vals[ci]!, x + 5, y + 7, { size: base - 1, width: c.w - 10, align: c.align, oneLine: true });
+        if (ci === 5 && cess) put(cess, x + 5, y + 7 + base + 2, { size: 6.6, color: T.muted, width: c.w - 10, align: "right" });
+        x += c.w;
       });
-      y += 14;
+      y += rowH;
+      hline(M, RIGHT, y, T.line, 0.5);
+    });
+    hline(M, RIGHT, y, T.tableBorder, 1);
+    y += 18;
+
+    // Part B
+    const transRows: [string, string][] = [
+      ["Mode", EWAY_TRANSPORT_MODE_LABELS[bill.transportMode]],
+      ["Vehicle No.", bill.vehicleNumber ?? "—"],
+      ["Vehicle Type", bill.vehicleType === "OVER_DIMENSIONAL_CARGO" ? "Over-dimensional cargo" : "Regular"],
+      ["Transporter", bill.transporterName ?? "—"],
+      ["Transporter GSTIN / ID", bill.transporterGstin ?? "—"],
+    ];
+    const th = keyValueCard(doc, w, { x: M, y, width: CONTENT_W, title: "Part B — Transport", rows: transRows, keyW: 140, size: base, draw: false });
+    y = ensureSpace(y, th);
+    keyValueCard(doc, w, { x: M, y, width: CONTENT_W, title: "Part B — Transport", rows: transRows, keyW: 140, size: base });
+    y += th + 14;
+
+    if (bill.status === "ERROR" && bill.errorMessage) {
+      y = ensureSpace(y, 40);
+      label("Last error", M, y);
+      put(bill.errorMessage, M, y + 13, { size: base - 1, color: "#b91c1c", width: CONTENT_W });
     }
 
-    if (bill.qrCodeData) {
-      doc.addPage();
-      doc.fontSize(12).text("QR / Verification data", { underline: true });
-      doc.fontSize(8).text(bill.qrCodeData, { width: 480 });
-    }
+    removeHeader();
+    stampPageChrome(doc, w, {
+      identity: [company.name, company.gstin ? `GSTIN ${company.gstin}` : ""].filter(Boolean).join("  ·  "),
+      footerNote: "Verify at ewaybillgst.gov.in",
+      reference: ref,
+      watermark: ebn ? (bill.status === "CANCELLED" ? "CANCELLED" : null) : "DRAFT",
+    });
   });
 }

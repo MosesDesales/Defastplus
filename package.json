@@ -10,7 +10,12 @@
     "test:ocr": "npx tsx --test src/lib/ocr/__tests__/indian-gst.test.ts",
     "test:eway": "npx tsx --test src/lib/eway/__tests__/validation.test.ts",
     "test:tally": "npx tsx --test src/lib/tally/__tests__/tally-parser.test.ts",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "test:superadmin": "npx tsx --test src/lib/superadmin/__tests__/*.test.ts",
+    "seed:plans": "npx tsx scripts/seed-subscription-plans.ts",
+    "superuser:create": "npx tsx scripts/create-super-user.ts",
+    "test:documents": "npx tsx --test src/lib/pdf/__tests__/*.test.ts",
+    "test:banking": "npx tsx --test src/lib/banking/__tests__/*.test.ts"
   },
   "dependencies": {
     "@cursor/sdk": "^1.0.12",
@@ -24,6 +29,7 @@
     "nodemailer": "^8.0.7",
     "pdf-parse": "^1.1.1",
     "pdfkit": "^0.18.0",
+    "qrcode": "^1.5.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-hook-form": "^7.74.0",
@@ -39,6 +45,7 @@
     "@types/node": "^20",
     "@types/nodemailer": "^8.0.0",
     "@types/pdfkit": "^0.17.6",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

@@ -15,6 +15,8 @@ export type SessionPayload = {
   email: string;
   name: string;
   permissions: string[];
+  /** Must equal `User.sessionVersion`; bumping that column revokes the token. */
+  sessionVersion: number;
 };
 
 export async function signSession(payload: SessionPayload) {
@@ -22,6 +24,7 @@ export async function signSession(payload: SessionPayload) {
     email: payload.email,
     name: payload.name,
     permissions: payload.permissions,
+    sv: payload.sessionVersion,
   })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(payload.sub)
@@ -50,5 +53,10 @@ export async function verifySession(token: string): Promise<SessionPayload> {
       /* keep default */
     }
   }
-  return { sub, email, name, permissions };
+  return { sub, email, name, permissions, sessionVersion: sessionVersionFromPayload(payload) };
+}
+
+/** Tokens issued before session versioning carry no `sv` claim and count as version 0. */
+export function sessionVersionFromPayload(payload: Record<string, unknown>): number {
+  return typeof payload.sv === "number" && Number.isInteger(payload.sv) ? payload.sv : 0;
 }

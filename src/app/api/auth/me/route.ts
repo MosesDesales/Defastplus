@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
+import { getUserAccessState } from "@/lib/superadmin/access";
 
 export async function GET() {
   const session = await getSession();
@@ -25,6 +26,8 @@ export async function GET() {
     /* use session */
   }
 
+  const access = await getUserAccessState(user.id);
+
   return NextResponse.json({
     user: {
       id: user.id,
@@ -32,6 +35,8 @@ export async function GET() {
       name: user.name,
       createdAt: user.createdAt,
       permissions,
+      isSuperUser: access?.isSuperUser ?? false,
+      modules: access ? [...access.modules] : [],
     },
   });
 }

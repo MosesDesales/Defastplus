@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["tesseract.js", "pdfkit", "pdf-parse", "sharp", "xlsx", "@cursor/sdk"],
+  // Invoice PDFs read the embedded Inter fonts from disk (download + email attachments).
+  outputFileTracingIncludes: {
+    "/api/**/*": ["./src/lib/pdf/fonts/**/*"],
+  },
   async rewrites() {
     return [
       { source: "/integrations/:path*", destination: "/dashboard/integrations/:path*" },

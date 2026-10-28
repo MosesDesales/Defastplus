@@ -69,6 +69,12 @@ function pickOrg(input: unknown): OrganizationProfileDTO | null {
   if (typeof o.communicationLanguages === "string") d.communicationLanguages = o.communicationLanguages;
   if (typeof o.addressFormatNote === "string") d.addressFormatNote = o.addressFormatNote;
   if (typeof o.prefWeekStartsMonday === "boolean") d.prefWeekStartsMonday = o.prefWeekStartsMonday;
+  if (typeof o.bankAccountName === "string") d.bankAccountName = o.bankAccountName;
+  if (typeof o.bankName === "string") d.bankName = o.bankName;
+  if (typeof o.bankAccountNumber === "string") d.bankAccountNumber = o.bankAccountNumber;
+  if (typeof o.bankIfsc === "string") d.bankIfsc = o.bankIfsc;
+  if (typeof o.bankBranch === "string") d.bankBranch = o.bankBranch;
+  if (typeof o.bankUpiId === "string") d.bankUpiId = o.bankUpiId;
   return d;
 }
 
@@ -126,6 +132,10 @@ export async function PUT(request: Request) {
   const gst = normalizeGstin(org.gstin);
   if (!isValidGstin(gst)) {
     return NextResponse.json({ error: "GSTIN format is invalid for India (15 characters)" }, { status: 400 });
+  }
+  const ifsc = org.bankIfsc.trim().toUpperCase();
+  if (ifsc && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) {
+    return NextResponse.json({ error: "IFSC must be 11 characters, e.g. HDFC0001234" }, { status: 400 });
   }
   if (logoPayloadTooLarge(org.logoUrl)) {
     return NextResponse.json({ error: "Logo must be under 1MB" }, { status: 400 });
@@ -193,6 +203,12 @@ export async function PUT(request: Request) {
     communicationLanguages: org.communicationLanguages.trim() || "en",
     addressFormatNote: org.addressFormatNote.trim() || null,
     prefWeekStartsMonday: org.prefWeekStartsMonday,
+    bankAccountName: org.bankAccountName.trim() || null,
+    bankName: org.bankName.trim() || null,
+    bankAccountNumber: org.bankAccountNumber.replace(/\s+/g, "") || null,
+    bankIfsc: ifsc || null,
+    bankBranch: org.bankBranch.trim() || null,
+    bankUpiId: org.bankUpiId.trim() || null,
   };
 
   const row = await prisma.companyProfile.upsert({
@@ -215,6 +231,7 @@ export async function PUT(request: Request) {
     email: updatedUser.email,
     name: updatedUser.name,
     permissions,
+    sessionVersion: updatedUser.sessionVersion,
   });
 
   const res = NextResponse.json({ ok: true, message: "Profile updated successfully" });

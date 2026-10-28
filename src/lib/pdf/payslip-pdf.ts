@@ -1,12 +1,22 @@
-import { logoBufferFromUrl } from "@/lib/pdf/logo-image-buffer";
-import { pdfBufferFromDoc } from "@/lib/pdf/simple-pdf";
-
-const ACCENT = "#f0a8a0";
-const BORDER = "#1a1a1a";
-const TEXT = "#111111";
+import { amountInWords } from "@/lib/amount-in-words";
+import { docCompany, fmtDocDate, type CompanyForDocs } from "@/lib/documents/business-document";
+import {
+  CONTENT_W,
+  M,
+  RIGHT,
+  drawBrandHeader,
+  installContinuationHeader,
+  keyValueCard,
+  loadLogo,
+  makeTheme,
+  makeWriter,
+  money,
+  renderPdf,
+  stampPageChrome,
+} from "@/lib/pdf/pdf-kit";
 
 export type PayslipPdfInput = {
-  company: { companyName: string | null; logoUrl: string | null } | null;
+  company: (Partial<CompanyForDocs> & { companyName: string | null; logoUrl: string | null }) | null;
   employee: {
     displayName: string;
     employeeNumber: string;
@@ -28,195 +38,171 @@ export type PayslipPdfInput = {
   leaveLines: { name: string; alloted: number; availed: number; takenYtd: number; balance: number }[];
 };
 
-const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
-function monthLabel(yearMonth: string) {
+export function payslipMonthLabel(yearMonth: string) {
   const [y, m] = yearMonth.split("-").map(Number);
-  return `${MONTHS[(m ?? 1) - 1]}-${y}`;
+  return `${MONTHS[(m ?? 1) - 1]} ${y}`;
 }
 
-function fmt(n: number) {
-  return n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** Payslips are emailed, so only the last four digits of the account are printed. */
+export function maskAccount(no: string | null | undefined) {
+  const v = no?.replace(/\s+/g, "") ?? "";
+  if (!v) return "—";
+  return v.length <= 4 ? v : `${"•".repeat(Math.min(8, v.length - 4))}${v.slice(-4)}`;
 }
 
 export async function buildPayslipPdfBuffer(input: PayslipPdfInput): Promise<Buffer> {
-  const logoBuf = input.company?.logoUrl ? await logoBufferFromUrl(input.company.logoUrl) : null;
+  const company = docCompany({
+    companyName: input.company?.companyName ?? null,
+    logoUrl: input.company?.logoUrl ?? null,
+    gstin: input.company?.gstin ?? null,
+    billingStreet: input.company?.billingStreet ?? null,
+    billingCity: input.company?.billingCity ?? null,
+    billingState: input.company?.billingState ?? null,
+    billingZip: input.company?.billingZip ?? null,
+    billingCountry: input.company?.billingCountry ?? "IN",
+    billingStreet2: input.company?.billingStreet2 ?? null,
+    phone: input.company?.phone ?? null,
+    contactEmail: input.company?.contactEmail ?? null,
+    websiteUrl: input.company?.websiteUrl ?? null,
+  });
+  const logo = await loadLogo(company.logoUrl);
+  const month = payslipMonthLabel(input.yearMonth);
+  const e = input.employee;
+  const ref = `${e.employeeNumber} · ${month}`;
 
-  return pdfBufferFromDoc((doc) => {
-    const margin = doc.page.margins.left;
-    const pageW = doc.page.width;
-    const contentW = pageW - margin * 2;
-    const rightX = pageW - margin;
-    const half = contentW / 2;
+  return renderPdf({ Title: `Payslip ${month} — ${e.displayName}`, Author: company.name }, (doc, F) => {
+    const T = makeTheme();
+    const base = 9;
+    const w = makeWriter(doc, F, T, base);
+    const { put, hline, label, ensureSpace, measure } = w;
+    const cur = (n: number) => `${F.rupee} ${money(n)}`;
+    const removeHeader = installContinuationHeader(doc, w, { logo, companyName: company.name, gstin: company.gstin, title: "PAYSLIP", number: ref });
 
-    // —— Header: company name (left) + centered title + logo (right)
-    doc.font("Helvetica-Bold").fontSize(15).fillColor(TEXT).text(input.company?.companyName ?? "Company", margin, margin, { width: contentW - 100 });
-    doc.font("Helvetica-Bold").fontSize(13).text(`Payslip ${monthLabel(input.yearMonth)}`, margin, margin + 22, { width: contentW, align: "center" });
-    if (logoBuf) {
-      try {
-        doc.image(logoBuf, rightX - 90, margin - 4, { width: 90, height: 40, fit: [90, 40] });
-      } catch {
-        /* skip broken logo */
-      }
-    }
-    doc.y = margin + 50;
+    let y = drawBrandHeader(doc, w, {
+      logo,
+      company: { ...company, pan: null },
+      right: (rx, rw, top) => {
+        let ry = put("PAYSLIP", rx, top - 2, { font: F.bold, size: 20, color: T.primary, width: rw, align: "right", spacing: 0.6 });
+        ry = put(`For the month of ${month}`, rx, ry, { font: F.medium, size: 8, color: T.muted, width: rw, align: "right" });
+        ry = put("Net pay", rx, ry + 10, { size: 7.5, color: T.muted, width: rw, align: "right" });
+        return put(cur(input.netPay), rx, ry, { font: F.bold, size: 14, width: rw, align: "right" });
+      },
+    });
 
-    // —— Employee name banner
-    const nameLineY = doc.y;
-    const nameLineH = 26;
-    doc.lineWidth(1).strokeColor(BORDER).rect(margin, nameLineY, contentW, nameLineH).stroke();
-    const subLine = input.employee.department?.trim();
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(11)
-      .fillColor(TEXT)
-      .text(`${input.employee.displayName}${subLine ? ` : ${subLine}` : ""}`, margin + 8, nameLineY + 8);
-    doc.y = nameLineY + nameLineH;
-
-    // —— Employee Details / Payment Details grid
-    let y = doc.y;
-    const headerH = 20;
-    doc.rect(margin, y, contentW, headerH).fill(ACCENT);
-    doc.lineWidth(1).strokeColor(BORDER);
-    doc.rect(margin, y, contentW, headerH).stroke();
-    doc.moveTo(margin + half, y).lineTo(margin + half, y + headerH).stroke();
-    doc.font("Helvetica-Bold").fontSize(10).fillColor(TEXT);
-    doc.text("Employee Details", margin + 6, y + 5);
-    doc.text("Payment Details", margin + half + 6, y + 5);
-    y += headerH;
-
-    const bankLabel = input.employee.bankAccountName
-      ? `${input.employee.bankAccountName}${input.employee.bankIfsc ? `\nIFSC Code: ${input.employee.bankIfsc}` : ""}`
-      : "—";
-
+    // Employee + payment cards
+    const gap = 12;
+    const cardW = (CONTENT_W - gap) / 2;
     const empRows: [string, string][] = [
-      ["Employee Code.", input.employee.employeeNumber],
-      ["Designation", input.employee.designation ?? "—"],
-      ["Department", input.employee.department ?? "—"],
-      ["Date of joining", input.employee.dateOfJoining ? input.employee.dateOfJoining.toISOString().slice(0, 10) : "—"],
+      ["Employee Code", e.employeeNumber],
+      ["Designation", e.designation?.trim() || "—"],
+      ["Department", e.department?.trim() || "—"],
+      ["Date of Joining", e.dateOfJoining ? fmtDocDate(e.dateOfJoining) : "—"],
+      ["PAN", e.pan?.trim() || "—"],
     ];
     const payRows: [string, string][] = [
-      ["Bank Name & Branch", bankLabel],
-      ["Bank A/c No.", input.employee.bankAccountNo ?? "—"],
-      ["PAN NO.", input.employee.pan ?? "—"],
-      ["Days Paid", fmt(input.daysPaid)],
+      ["Pay Period", month],
+      ["Days Paid", String(input.daysPaid)],
+      ["Account Name", e.bankAccountName?.trim() || "—"],
+      ["Account No.", maskAccount(e.bankAccountNo)],
+      ["IFSC", e.bankIfsc?.trim() || "—"],
     ];
+    const h = Math.max(
+      keyValueCard(doc, w, { x: M, y, width: cardW, title: e.displayName, rows: empRows, size: base, draw: false }),
+      keyValueCard(doc, w, { x: M + cardW + gap, y, width: cardW, title: "Payment Details", rows: payRows, size: base, draw: false }),
+    );
+    keyValueCard(doc, w, { x: M, y, width: cardW, title: e.displayName, rows: empRows, size: base, fill: T.soft, minH: h });
+    keyValueCard(doc, w, { x: M + cardW + gap, y, width: cardW, title: "Payment Details", rows: payRows, size: base, minH: h });
+    y += h + 18;
 
-    const labelW = half * 0.42;
-    const valueW = half - labelW - 12;
-    for (let i = 0; i < 4; i++) {
-      const [el, ev] = empRows[i]!;
-      const [pl, pv] = payRows[i]!;
-      const lineCount = Math.max(ev.split("\n").length, pv.split("\n").length);
-      const rh = Math.max(20, lineCount * 10 + 10);
-
-      doc.rect(margin, y, half, rh).stroke();
-      doc.rect(margin + half, y, half, rh).stroke();
-
-      doc.font("Helvetica-Bold").fontSize(8).fillColor(TEXT).text(el, margin + 6, y + 6, { width: labelW });
-      doc.font("Helvetica").fontSize(8).text(ev, margin + 6 + labelW, y + 6, { width: valueW });
-      doc.font("Helvetica-Bold").fontSize(8).text(pl, margin + half + 6, y + 6, { width: labelW });
-      doc.font("Helvetica").fontSize(8).text(pv, margin + half + 6 + labelW, y + 6, { width: valueW });
-
-      y += rh;
-    }
-
-    doc.y = y + 14;
-
-    // —— Earnings / Deductions grid
-    y = doc.y;
-    doc.rect(margin, y, contentW, headerH).fill(ACCENT);
-    doc.rect(margin, y, contentW, headerH).stroke();
-    doc.moveTo(margin + half, y).lineTo(margin + half, y + headerH).stroke();
-    doc.font("Helvetica-Bold").fontSize(10).fillColor(TEXT);
-    doc.text("Earnings", margin + 6, y + 5, { width: half - 60 });
-    doc.text("INR", margin, y + 5, { width: half - 8, align: "right" });
-    doc.text("Deductions", margin + half + 6, y + 5, { width: half - 60 });
-    doc.text("INR", margin + half, y + 5, { width: half - 8, align: "right" });
-    y += headerH;
-
-    const rowCount = Math.max(input.earnings.length, input.deductions.length, 1);
-    const lineH = 16;
-    for (let i = 0; i < rowCount; i++) {
-      const e = input.earnings[i];
-      const d = input.deductions[i];
-      doc.rect(margin, y, half, lineH).stroke();
-      doc.rect(margin + half, y, half, lineH).stroke();
-      doc.font("Helvetica").fontSize(8).fillColor(TEXT);
-      if (e) {
-        doc.text(e.name, margin + 6, y + 4, { width: half - 90 });
-        doc.text(fmt(e.amount), margin, y + 4, { width: half - 8, align: "right" });
+    // Earnings | Deductions
+    const colW = cardW;
+    const headH = 24;
+    const rowH = base + 11;
+    const rows = Math.max(input.earnings.length, input.deductions.length, 1);
+    y = ensureSpace(y, headH + rows * rowH + rowH + 60);
+    const table = (x: number, title: string, items: { name: string; amount: number }[], totalLabel: string, total: number) => {
+      doc.save().rect(x, y, colW, headH).fill(T.tableHead).restore();
+      put(title.toUpperCase(), x + 10, y + 8.5, { font: F.semibold, size: 6.8, color: T.primaryDark, spacing: 0.4, width: colW / 2 });
+      put("AMOUNT (INR)", x + colW / 2, y + 8.5, { font: F.semibold, size: 6.8, color: T.primaryDark, spacing: 0.4, width: colW / 2 - 10, align: "right" });
+      let ry = y + headH;
+      for (let i = 0; i < rows; i++) {
+        const it = items[i];
+        if (i % 2 === 1) doc.save().rect(x, ry, colW, rowH).fill(T.stripe).restore();
+        if (it) {
+          put(it.name, x + 10, ry + 5.5, { size: base - 0.5, width: colW - 110, oneLine: true });
+          put(money(it.amount), x + colW - 100, ry + 5.5, { size: base - 0.5, width: 90, align: "right" });
+        }
+        ry += rowH;
+        hline(x, x + colW, ry, T.line, 0.4);
       }
-      if (d) {
-        doc.text(d.name, margin + half + 6, y + 4, { width: half - 90 });
-        doc.text(fmt(d.amount), margin + half, y + 4, { width: half - 8, align: "right" });
-      }
-      y += lineH;
+      put(totalLabel, x + 10, ry + 6, { font: F.semibold, size: base - 0.5, width: colW - 110 });
+      put(money(total), x + colW - 100, ry + 6, { font: F.semibold, size: base - 0.5, width: 90, align: "right" });
+      hline(x, x + colW, ry + rowH + 2, T.tableBorder, 1);
+      return ry + rowH + 2;
+    };
+    const endL = table(M, "Earnings", input.earnings, "Gross Earnings", input.gross);
+    const endR = table(M + cardW + gap, "Deductions", input.deductions, "Total Deductions", input.totalDeductions);
+    y = Math.max(endL, endR) + 16;
+
+    // Net pay band
+    const words = amountInWords(input.netPay);
+    const bandH = 30 + measure(words, F.medium, base - 1, CONTENT_W - 220);
+    y = ensureSpace(y, bandH + 10);
+    doc.save().roundedRect(M, y, CONTENT_W, bandH, 6).fill(T.primary).restore();
+    put("NET PAY", M + 14, y + 10, { font: F.semibold, size: 7, color: "#ffffff", spacing: 0.8 });
+    put(words, M + 14, y + 22, { font: F.medium, size: base - 1, color: "#ffffff", width: CONTENT_W - 220 });
+    put(cur(input.netPay), RIGHT - 200, y + bandH / 2 - 9, { font: F.bold, size: 16, color: "#ffffff", width: 186, align: "right" });
+    put("Gross − Deductions", RIGHT - 200, y + bandH / 2 + 9, { size: 7, color: "#ffffff", width: 186, align: "right" });
+    y += bandH + 10;
+    if (e.bankAccountNo?.trim()) {
+      put(`Net pay of ${cur(input.netPay)} is credited to account ${maskAccount(e.bankAccountNo)} by bank transfer.`, M, y, {
+        size: base - 1,
+        color: T.muted,
+        width: CONTENT_W,
+      });
+      y = doc.y;
     }
+    y += 18;
 
-    // Totals row
-    doc.rect(margin, y, half, lineH).stroke();
-    doc.rect(margin + half, y, half, lineH).stroke();
-    doc.font("Helvetica-Bold").fontSize(8).fillColor(TEXT);
-    doc.text("Total Earnings", margin + 6, y + 4, { width: half - 90 });
-    doc.text(fmt(input.gross), margin, y + 4, { width: half - 8, align: "right" });
-    doc.text("Total Deductions", margin + half + 6, y + 4, { width: half - 90 });
-    doc.text(fmt(input.totalDeductions), margin + half, y + 4, { width: half - 8, align: "right" });
-    y += lineH;
-
-    // Net pay row (highlighted, left column only, matching the reference layout)
-    const netH = 22;
-    doc.rect(margin, y, half, netH).fill(ACCENT);
-    doc.rect(margin, y, half, netH).stroke();
-    doc.font("Helvetica-Bold").fontSize(11).fillColor(TEXT);
-    doc.text("Net Pay (INR)", margin + 6, y + 5, { width: half - 90 });
-    doc.text(fmt(input.netPay), margin, y + 5, { width: half - 8, align: "right" });
-    y += netH;
-
-    doc.y = y + 14;
-
-    // —— Deposit statement
-    const bankName = input.employee.bankAccountName ?? "your bank";
-    const statementY = doc.y;
-    const statementText = `Net Pay of INR ${fmt(input.netPay)} is payable to your ${bankName} account by bank transfer.`;
-    const statementH = doc.heightOfString(statementText, { width: contentW - 16 }) + 16;
-    doc.rect(margin, statementY, contentW, statementH).stroke();
-    doc.font("Helvetica-Bold").fontSize(10).fillColor(TEXT).text(statementText, margin + 8, statementY + 8, { width: contentW - 16 });
-    doc.y = statementY + statementH + 14;
-
-    // —— Leave table
+    // Leave summary
     if (input.leaveLines.length > 0) {
       const cols = [
-        { label: "Leave Name", w: contentW * 0.28, align: "left" as const },
-        { label: "Leave Alloted", w: contentW * 0.18, align: "right" as const },
-        { label: "Leave Availed", w: contentW * 0.18, align: "right" as const },
-        { label: "Leave Taken YTD", w: contentW * 0.18, align: "right" as const },
-        { label: "Leave Balance", w: contentW * 0.18, align: "right" as const },
+        { label: "Leave Type", w: CONTENT_W * 0.32, align: "left" as const },
+        { label: "Allotted", w: CONTENT_W * 0.17, align: "right" as const },
+        { label: "Availed", w: CONTENT_W * 0.17, align: "right" as const },
+        { label: "Taken YTD", w: CONTENT_W * 0.17, align: "right" as const },
+        { label: "Balance", w: CONTENT_W * 0.17, align: "right" as const },
       ];
-      y = doc.y;
-      doc.rect(margin, y, contentW, headerH).fill(ACCENT);
-      let cx = margin;
-      doc.font("Helvetica-Bold").fontSize(8).fillColor(TEXT);
+      y = ensureSpace(y, 30 + headH + (input.leaveLines.length + 1) * rowH);
+      label("Leave Summary", M, y);
+      y += 14;
+      doc.save().rect(M, y, CONTENT_W, headH).fill(T.tableHead).restore();
+      let cx = M;
       for (const c of cols) {
-        doc.rect(cx, y, c.w, headerH).stroke();
-        doc.text(c.label, cx + 4, y + 6, { width: c.w - 8, align: c.align });
+        put(c.label.toUpperCase(), cx + 10, y + 8.5, { font: F.semibold, size: 6.8, color: T.primaryDark, width: c.w - 20, align: c.align, spacing: 0.4 });
         cx += c.w;
       }
-      y += headerH;
-
-      doc.font("Helvetica").fontSize(8);
-      for (const line of input.leaveLines) {
-        cx = margin;
-        const values = [line.name, fmt(line.alloted), fmt(line.availed), fmt(line.takenYtd), fmt(line.balance)];
-        for (let i = 0; i < cols.length; i++) {
-          const c = cols[i]!;
-          doc.rect(cx, y, c.w, lineH).stroke();
-          doc.text(values[i]!, cx + 4, y + 4, { width: c.w - 8, align: c.align });
+      y += headH;
+      input.leaveLines.forEach((l, i) => {
+        if (i % 2 === 1) doc.save().rect(M, y, CONTENT_W, rowH).fill(T.stripe).restore();
+        const vals = [l.name, String(l.alloted), String(l.availed), String(l.takenYtd), String(l.balance)];
+        cx = M;
+        cols.forEach((c, ci) => {
+          put(vals[ci]!, cx + 10, y + 5.5, { size: base - 0.5, width: c.w - 20, align: c.align, oneLine: true, font: ci === 4 ? F.semibold : F.regular });
           cx += c.w;
-        }
-        y += lineH;
-      }
-      doc.y = y;
+        });
+        y += rowH;
+        hline(M, RIGHT, y, T.line, 0.4);
+      });
     }
+
+    removeHeader();
+    stampPageChrome(doc, w, {
+      identity: [company.name, company.gstin ? `GSTIN ${company.gstin}` : ""].filter(Boolean).join("  ·  "),
+      footerNote: "Computer-generated; no signature required.",
+      reference: ref,
+    });
   });
 }

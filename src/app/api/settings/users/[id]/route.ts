@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireApiPermission } from "@/lib/api-auth";
 import { writeAuditLog } from "@/lib/audit";
 import type { TeamMemberStatus } from "@prisma/client";
+import { getPlanLimits } from "@/lib/superadmin/service";
 
 type P = { params: Promise<{ id: string }> };
 
@@ -24,6 +25,20 @@ export async function PATCH(request: Request, props: P) {
     where: { id, ownerUserId: session.sub },
   });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  if (existing.status === "INACTIVE" && d.status !== undefined && d.status !== "INACTIVE") {
+    const limits = await getPlanLimits(session.sub);
+    if (limits?.maxUsers != null) {
+      const seats =
+        (await prisma.teamMember.count({ where: { ownerUserId: session.sub, status: { not: "INACTIVE" } } })) + 1;
+      if (seats >= limits.maxUsers) {
+        return NextResponse.json(
+          { error: `Your ${limits.name} plan allows ${limits.maxUsers} users. Upgrade to reactivate this user.` },
+          { status: 403 },
+        );
+      }
+    }
+  }
 
   await prisma.teamMember.update({
     where: { id },

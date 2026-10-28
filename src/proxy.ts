@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySession } from "@/lib/auth";
 import { hasPermission, permissionForPath } from "@/lib/permissions";
-import { getUserAccessState, isSessionCurrent } from "@/lib/superadmin/access";
+import { getSessionAccessState } from "@/lib/superadmin/access";
 import { isPathAllowedForModules } from "@/lib/superadmin/modules";
 
 /** Handled entirely by their own routes: sign-in must work with a stale cookie; cron uses CRON_SECRET. */
@@ -52,8 +52,8 @@ export async function proxy(request: NextRequest) {
     return signedOut(request, isApi);
   }
 
-  const state = await getUserAccessState(session.sub);
-  if (!isSessionCurrent(state, session.sessionVersion)) return signedOut(request, isApi);
+  const state = await getSessionAccessState(session.sub, session.sessionVersion);
+  if (!state) return signedOut(request, isApi);
 
   if (isSuperUserPath(path)) {
     if (!state.isSuperUser) return denied(request, isApi, "Super User access required", "/dashboard?access=denied");

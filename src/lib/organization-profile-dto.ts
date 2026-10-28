@@ -38,6 +38,12 @@ export type OrganizationProfileDTO = {
   communicationLanguages: string;
   addressFormatNote: string;
   prefWeekStartsMonday: boolean;
+  bankAccountName: string;
+  bankName: string;
+  bankAccountNumber: string;
+  bankIfsc: string;
+  bankBranch: string;
+  bankUpiId: string;
 };
 
 export function defaultOrganizationProfileDTO(): OrganizationProfileDTO {
@@ -78,6 +84,12 @@ export function defaultOrganizationProfileDTO(): OrganizationProfileDTO {
     communicationLanguages: "en",
     addressFormatNote: "",
     prefWeekStartsMonday: true,
+    bankAccountName: "",
+    bankName: "",
+    bankAccountNumber: "",
+    bankIfsc: "",
+    bankBranch: "",
+    bankUpiId: "",
   };
 }
 
@@ -119,5 +131,11 @@ export function companyRowToDTO(row: CompanyProfile): OrganizationProfileDTO {
     communicationLanguages: row.communicationLanguages ?? "en",
     addressFormatNote: row.addressFormatNote ?? "",
     prefWeekStartsMonday: row.prefWeekStartsMonday,
+    bankAccountName: row.bankAccountName ?? "",
+    bankName: row.bankName ?? "",
+    bankAccountNumber: row.bankAccountNumber ?? "",
+    bankIfsc: row.bankIfsc ?? "",
+    bankBranch: row.bankBranch ?? "",
+    bankUpiId: row.bankUpiId ?? "",
   };
 }

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireApiPermission } from "@/lib/api-auth";
 import { getEWayBill } from "@/lib/eway/service";
 import { buildEWayBillPdf } from "@/lib/pdf/eway-bill-pdf";
+import { loadCompanyForUser } from "@/lib/documents/load-invoice-document";
 
 const schema = z.object({
   to: z.string().email(),
@@ -37,7 +38,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   const bill = await getEWayBill(session.sub, id);
   if (!bill) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const pdf = await buildEWayBillPdf(bill);
+  const pdf = await buildEWayBillPdf(bill, await loadCompanyForUser(session.sub));
   const ebn = bill.ewayBillNumber ?? "draft";
   const subject = parsed.data.subject ?? `E-Way Bill ${ebn} — ${bill.sourceDocumentNumber}`;
   const text =

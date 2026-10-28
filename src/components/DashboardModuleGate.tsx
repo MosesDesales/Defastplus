@@ -11,7 +11,7 @@ import { useOrganizationModuleSettings } from "@/components/organization-module-
 export function DashboardModuleGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? "";
   const router = useRouter();
-  const { settings, loaded } = useOrganizationModuleSettings();
+  const { settings, loaded, canAccess } = useOrganizationModuleSettings();
 
   useEffect(() => {
     if (!loaded) return;
@@ -22,11 +22,15 @@ export function DashboardModuleGate({ children }: { children: React.ReactNode })
       pathForGate = pathname.replace(/^\/tasks/, "/dashboard/tasks");
     }
     if (!pathForGate.startsWith("/dashboard")) return;
+    if (!canAccess(pathForGate)) {
+      router.replace("/dashboard?module=unassigned");
+      return;
+    }
     if (isDashboardPathExemptFromModuleGate(pathForGate)) return;
     if (!isDashboardPathAllowedForModules(pathForGate, settings)) {
       router.replace("/dashboard?module=disabled");
     }
-  }, [loaded, pathname, router, settings]);
+  }, [loaded, pathname, router, settings, canAccess]);
 
   return <>{children}</>;
 }

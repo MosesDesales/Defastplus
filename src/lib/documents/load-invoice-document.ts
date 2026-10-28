@@ -5,7 +5,7 @@ export async function loadInvoiceDocument(userId: string, id: string) {
     where: { id, userId },
     include: {
       customer: true,
-      lines: { orderBy: { sortOrder: "asc" } },
+      lines: { orderBy: { sortOrder: "asc" }, include: { item: { select: { hsnCode: true, unit: true } } } },
       documentTemplate: true,
     },
   });

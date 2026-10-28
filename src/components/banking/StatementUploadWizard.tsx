@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { CsvColumnMap } from "@/lib/banking/parse-csv";
-import { detectCsvDelim, splitCsvLine } from "@/lib/banking/parse-csv";
+import { useCallback, useEffect, useState } from "react";
+import { Download, FileSpreadsheet } from "lucide-react";
+import { StatementColumnMapper } from "@/components/banking/StatementColumnMapper";
+import { guessMapping, headingSignature, type MappingResult, type StatementMapping } from "@/lib/banking/statement-mapping";
 
 type Acct = { id: string; bankName: string; accountName: string };
 
@@ -36,7 +37,39 @@ type ExtractResponse = {
   csvFullText: string | null;
 };
 
-const TABS = ["Upload File", "OCR Preview", "Parsed Transactions", "Import Summary"] as const;
+/** Spreadsheets get a heading-mapping step; PDFs and images get the OCR text step instead. */
+const tabLabels = (isTable: boolean) => ["Upload File", isTable ? "Map Columns" : "OCR Preview", "Review Transactions", "Import Summary"];
+
+const MAPPING_STORE_PREFIX = "fastplus.statementMapping.";
+
+function loadSavedMapping(signature: string): StatementMapping | null {
+  if (!signature) return null;
+  try {
+    const raw = localStorage.getItem(MAPPING_STORE_PREFIX + signature);
+    return raw ? (JSON.parse(raw) as StatementMapping) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveMapping(signature: string, m: StatementMapping) {
+  if (!signature) return;
+  try {
+    localStorage.setItem(MAPPING_STORE_PREFIX + signature, JSON.stringify(m));
+  } catch {
+    /* storage unavailable — mapping simply isn't remembered */
+  }
+}
+
+/** Saved mapping for this heading layout (searching the top rows), else a fresh guess. */
+function initialMapping(table: string[][]): StatementMapping {
+  const guess = guessMapping(table);
+  for (let i = 0; i < Math.min(table.length, 30); i++) {
+    const saved = loadSavedMapping(headingSignature(table, i));
+    if (saved && saved.headerRowIndex === i) return saved;
+  }
+  return guess;
+}
 
 function uid(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -54,52 +87,9 @@ async function sha256File(file: File): Promise<string> {
     .join("");
 }
 
-function guessColumnMap(headers: (string | undefined)[]): CsvColumnMap {
-  const H = headers.map((h) => (h ?? "").trim().toLowerCase());
-  const findIdx = (test: (s: string) => boolean): number | null => {
-    const i = H.findIndex(test);
-    return i >= 0 ? i : null;
-  };
-  const date =
-    findIdx((s) => /date|value\s*dt|txn|transaction|posting/i.test(s)) ??
-    findIdx((s) => s === "date") ??
-    0;
-  const description =
-    findIdx((s) => /narrat|particular|description|details|remarks/i.test(s)) ?? Math.min(1, Math.max(0, H.length - 1));
-  const debit = findIdx((s) => /debit|withdraw|dr\.?|paid out/i.test(s));
-  const credit = findIdx((s) => /credit|deposit|cr\.?|paid in/i.test(s));
-  const amount = debit == null && credit == null ? findIdx((s) => /amount|^amt$/i.test(s)) : null;
-  const balance = findIdx((s) => /balance|closing/i.test(s));
-  const reference = findIdx((s) => /ref|chq|cheque|utr|transaction id/i.test(s));
-  if (debit != null || credit != null) {
-    return {
-      date,
-      description,
-      debit: debit ?? undefined,
-      credit: credit ?? undefined,
-      balance: balance ?? undefined,
-      reference: reference ?? undefined,
-    };
-  }
-  return {
-    date,
-    description,
-    amount: amount ?? Math.min(2, Math.max(0, H.length - 1)),
-    balance: balance ?? undefined,
-    reference: reference ?? undefined,
-  };
-}
-
-function suggestHeaderRow(matrix: string[][]): number {
-  for (let i = 0; i < Math.min(matrix.length, 25); i++) {
-    const joined = (matrix[i] ?? []).join(" ").toLowerCase();
-    if (/date|value|txn|narrat|debit|credit|balance|particular/i.test(joined)) return i;
-  }
-  return 0;
-}
-
 export function StatementUploadWizard() {
   const [accounts, setAccounts] = useState<Acct[]>([]);
+  const [accountsLoaded, setAccountsLoaded] = useState(false);
   const [accountId, setAccountId] = useState("");
   const [tab, setTab] = useState(0);
   const [progress, setProgress] = useState<string | null>(null);
@@ -109,8 +99,8 @@ export function StatementUploadWizard() {
   const [file, setFile] = useState<File | null>(null);
   const [extract, setExtract] = useState<ExtractResponse | null>(null);
   const [sheetIndex, setSheetIndex] = useState(0);
-  const [headerRowIndex, setHeaderRowIndex] = useState(0);
-  const [columnMap, setColumnMap] = useState<CsvColumnMap | null>(null);
+  const [mapping, setMapping] = useState<StatementMapping | null>(null);
+  const [rememberMapping, setRememberMapping] = useState(true);
   const [editableRawText, setEditableRawText] = useState("");
   const [parseWarnings, setParseWarnings] = useState<string[]>([]);
   const [rows, setRows] = useState<TxRow[]>([]);
@@ -129,6 +119,7 @@ export function StatementUploadWizard() {
     const res = await fetch("/api/banking/accounts");
     const data = (await res.json()) as { accounts?: Acct[] };
     setAccounts(data.accounts ?? []);
+    setAccountsLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -141,25 +132,6 @@ export function StatementUploadWizard() {
 
   const tableSample = extract?.tableSample;
 
-  useEffect(() => {
-    if (!tableSample?.length) return;
-    if (extract?.kind !== "xlsx" && extract?.kind !== "xls") return;
-    const hi = suggestHeaderRow(tableSample);
-    setHeaderRowIndex(hi);
-    const headers = tableSample[hi] ?? [];
-    setColumnMap(guessColumnMap(headers));
-  }, [tableSample, extract?.kind, extract?.fileName, sheetIndex]);
-
-  useEffect(() => {
-    if (extract?.kind !== "csv") return;
-    const src = extract.csvFullText ?? extract.rawTextPreview;
-    if (!src) return;
-    const firstLine = src.split(/\r?\n/).find((l) => l.trim().length > 0);
-    if (!firstLine) return;
-    const delim = detectCsvDelim(firstLine);
-    const headers = splitCsvLine(firstLine, delim);
-    setColumnMap(guessColumnMap(headers));
-  }, [extract?.kind, extract?.csvFullText, extract?.rawTextPreview]);
 
   useEffect(() => {
     if (extract?.rawTextPreview != null) setEditableRawText(extract.rawTextPreview);
@@ -182,16 +154,18 @@ export function StatementUploadWizard() {
           setRows([]);
           return;
         }
-        setProgress("Extracting transactions…");
         setExtract(data);
-        setRows(withRowIds(data.autoParsed));
         setParseWarnings(data.warnings ?? []);
-        setProgress("Matching records…");
-        await new Promise((r) => setTimeout(r, 200));
-        setProgress(null);
-        if (data.kind === "pdf" || data.kind === "image") setTab(1);
-        else if (data.kind === "xlsx" || data.kind === "xls") setTab(2);
-        else setTab(2);
+        if ((data.kind === "csv" || data.kind === "xlsx" || data.kind === "xls") && data.tableSample?.length) {
+          // Spreadsheet: pick the headings first (pre-filled from a saved or guessed mapping).
+          setMapping(initialMapping(data.tableSample));
+          setRows([]);
+          setTab(1);
+        } else {
+          setMapping(null);
+          setRows(withRowIds(data.autoParsed));
+          setTab(1);
+        }
       } finally {
         setBusy(false);
         setProgress(null);
@@ -223,39 +197,6 @@ export function StatementUploadWizard() {
     [applyExtract],
   );
 
-  const needsExcelParse = extract?.kind === "xlsx" || extract?.kind === "xls";
-
-  const runParseFromTable = useCallback(async () => {
-    if (!tableSample?.length || columnMap == null) {
-      setErr("Select columns for Excel import.");
-      return;
-    }
-    setErr(null);
-    setBusy(true);
-    setProgress("Parsing table…");
-    try {
-      const res = await fetch("/api/banking/statements/parse", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          table: tableSample,
-          headerRowIndex,
-          columnMap,
-        }),
-      });
-      const data = (await res.json()) as { rows?: Omit<TxRow, "id">[]; warnings?: string[]; error?: string };
-      if (!res.ok) {
-        setErr(data.error ?? "Parse failed");
-        return;
-      }
-      setRows(withRowIds(data.rows ?? []));
-      setParseWarnings(data.warnings ?? []);
-      setTab(2);
-    } finally {
-      setBusy(false);
-      setProgress(null);
-    }
-  }, [tableSample, columnMap, headerRowIndex]);
 
   const runParseFromOcr = useCallback(async () => {
     if (!editableRawText.trim()) {
@@ -288,32 +229,6 @@ export function StatementUploadWizard() {
     }
   }, [editableRawText, extract?.suggestedBank]);
 
-  const runParseCsvRemap = useCallback(async () => {
-    const csvText = extract?.csvFullText ?? extract?.rawTextPreview;
-    if (!csvText?.trim() || !columnMap) {
-      setErr("Need CSV text and column map.");
-      return;
-    }
-    setBusy(true);
-    setErr(null);
-    try {
-      const res = await fetch("/api/banking/statements/parse", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ csvText, columnMap }),
-      });
-      const data = (await res.json()) as { rows?: Omit<TxRow, "id">[]; warnings?: string[]; error?: string };
-      if (!res.ok) {
-        setErr(data.error ?? "Parse failed");
-        return;
-      }
-      setRows(withRowIds(data.rows ?? []));
-      setParseWarnings(data.warnings ?? []);
-      setTab(2);
-    } finally {
-      setBusy(false);
-    }
-  }, [extract?.csvFullText, extract?.rawTextPreview, columnMap]);
 
   const importRows = useCallback(async () => {
     if (!file || !rows.length || !accountId || !extract) return;
@@ -395,12 +310,32 @@ export function StatementUploadWizard() {
     }
   }, [lastImport?.importId]);
 
-  const headerOptions = useMemo(() => {
-    if (!tableSample?.length) return [];
-    return tableSample.slice(0, 30).map((_, i) => i);
-  }, [tableSample]);
+  const isTable = Boolean(mapping && tableSample?.length);
+  const TABS = tabLabels(isTable || !extract);
 
-  const headerCells = tableSample?.[headerRowIndex] ?? [];
+  const continueFromMapping = useCallback(
+    (result: MappingResult) => {
+      if (!mapping || !tableSample) return;
+      if (rememberMapping) saveMapping(headingSignature(tableSample, mapping.headerRowIndex), mapping);
+      setRows(
+        withRowIds(
+          result.rows.map((r) => ({
+            txnDate: r.txnDate.toISOString(),
+            description: r.description,
+            debit: r.debit,
+            credit: r.credit,
+            balance: r.balance,
+            reference: r.reference,
+          })),
+        ),
+      );
+      setParseWarnings(
+        result.skipped.length ? [`${result.skipped.length} row(s) without a date or amount were skipped (e.g. opening/closing balance lines).`] : [],
+      );
+      setTab(2);
+    },
+    [mapping, tableSample, rememberMapping],
+  );
 
   return (
     <div className="space-y-6">
@@ -431,9 +366,21 @@ export function StatementUploadWizard() {
 
       {tab === 0 ? (
         <div className="space-y-4">
-          <p className="text-sm text-slate-600 dark:text-slate-400">
-            Drag and drop a bank statement (CSV, XLSX, XLS, PDF, JPG, PNG). Maximum file size 10MB.
-          </p>
+          <div className="flex flex-col gap-3 rounded-xl border border-teal-200 bg-teal-50/60 p-4 text-sm dark:border-teal-900 dark:bg-teal-950/30 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex gap-3">
+              <FileSpreadsheet className="mt-0.5 h-5 w-5 shrink-0 text-teal-700 dark:text-teal-400" aria-hidden />
+              <p className="text-slate-700 dark:text-slate-300">
+                <strong>Excel works best.</strong>{" "}Download the statement from your net banking as Excel (.xlsx / .xls) or CSV —
+                you&apos;ll choose which heading is the date, description, debit and credit. PDF and photos also work via OCR.
+              </p>
+            </div>
+            <a
+              href="/api/banking/statements/template"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-teal-300 bg-white px-3 py-2 font-medium text-teal-800 hover:bg-teal-50 dark:border-teal-800 dark:bg-slate-900 dark:text-teal-200"
+            >
+              <Download className="h-4 w-4" aria-hidden /> Excel template
+            </a>
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block text-sm">
               <span className="font-medium">Bank account</span>
@@ -442,12 +389,23 @@ export function StatementUploadWizard() {
                 value={accountId}
                 onChange={(e) => setAccountId(e.target.value)}
               >
+                {!accountsLoaded ? <option value="">Loading accounts…</option> : null}
+                {accountsLoaded && !accounts.length ? <option value="">No bank accounts yet</option> : null}
                 {accounts.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.bankName} — {a.accountName}
                   </option>
                 ))}
               </select>
+              {accountsLoaded && !accounts.length ? (
+                <span className="mt-1 block text-xs text-amber-700 dark:text-amber-300">
+                  Add a bank account first under{" "}
+                  <Link href="/banking/accounts" className="font-medium underline">
+                    Bank accounts
+                  </Link>
+                  .
+                </span>
+              ) : null}
             </label>
             <label className="block text-sm">
               <span className="font-medium">Duplicate rows</span>
@@ -468,38 +426,18 @@ export function StatementUploadWizard() {
             onDrop={onDrop}
             className="flex min-h-[160px] cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-600 hover:border-teal-400 hover:bg-teal-50/30 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-400 dark:hover:border-teal-600"
           >
-            <input type="file" accept=".csv,.xlsx,.xls,.pdf,.jpg,.jpeg,.png" className="hidden" id="stmt-file" onChange={onFileInput} />
-            <label htmlFor="stmt-file" className="cursor-pointer text-teal-700 underline dark:text-teal-400">
-              Choose file
+            <input type="file" accept=".xlsx,.xls,.csv,.pdf,.jpg,.jpeg,.png" className="hidden" id="stmt-file" onChange={onFileInput} />
+            <FileSpreadsheet className="mb-2 h-8 w-8 text-slate-400" aria-hidden />
+            <label htmlFor="stmt-file" className="cursor-pointer font-medium text-teal-700 underline dark:text-teal-400">
+              Choose Excel or CSV file
             </label>
-            <span className="mt-2">or drop it here</span>
+            <span className="mt-1">or drop it here · .xlsx, .xls, .csv (also PDF, JPG, PNG) · max 10MB</span>
             {file ? (
               <p className="mt-3 font-mono text-xs text-slate-500">
                 {file.name} ({(file.size / 1024).toFixed(1)} KB)
               </p>
             ) : null}
           </div>
-
-          {extract?.sheetNames && extract.sheetNames.length > 1 ? (
-            <label className="block text-sm">
-              <span className="font-medium">Sheet</span>
-              <select
-                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700 dark:bg-slate-950"
-                value={sheetIndex}
-                onChange={(e) => {
-                  const v = parseInt(e.target.value, 10);
-                  setSheetIndex(v);
-                  if (file) void applyExtract(file, v);
-                }}
-              >
-                {extract.sheetNames.map((n, i) => (
-                  <option key={n} value={i}>
-                    {n}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
 
           {extract ? (
             <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs dark:border-slate-800 dark:bg-slate-900">
@@ -519,7 +457,29 @@ export function StatementUploadWizard() {
         </div>
       ) : null}
 
-      {tab === 1 ? (
+      {tab === 1 && isTable && mapping && tableSample ? (
+        <StatementColumnMapper
+          table={tableSample}
+          mapping={mapping}
+          onChange={setMapping}
+          sheetNames={extract?.sheetNames ?? null}
+          sheetIndex={sheetIndex}
+          onSheetChange={(v) => {
+            setSheetIndex(v);
+            if (file) void applyExtract(file, v);
+          }}
+          remember={rememberMapping}
+          onRememberChange={setRememberMapping}
+          onContinue={continueFromMapping}
+          busy={busy}
+        />
+      ) : null}
+
+      {tab === 1 && !isTable && !extract ? (
+        <p className="text-sm text-slate-500">Upload an Excel or CSV statement first, then choose its headings here.</p>
+      ) : null}
+
+      {tab === 1 && !isTable && extract ? (
         <div className="space-y-3">
           <p className="text-sm text-slate-600 dark:text-slate-400">
             Review extracted text. OCR is not perfect—fix obvious errors, then parse into rows. Low confidence rows should be
@@ -550,122 +510,6 @@ export function StatementUploadWizard() {
 
       {tab === 2 ? (
         <div className="space-y-4">
-          {needsExcelParse && tableSample?.length ? (
-            <div className="space-y-3 rounded-xl border border-slate-200 p-4 dark:border-slate-800">
-              <h3 className="text-sm font-semibold">Excel column mapping</h3>
-              <p className="text-xs text-slate-500">First 10 rows preview. Set header row and column indices (0-based).</p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="text-xs">
-                  Header row index
-                  <select
-                    className="mt-1 w-full rounded border border-slate-200 px-2 py-1 dark:border-slate-700 dark:bg-slate-950"
-                    value={headerRowIndex}
-                    onChange={(e) => {
-                      const v = parseInt(e.target.value, 10);
-                      setHeaderRowIndex(v);
-                      const hdr = tableSample[v] ?? [];
-                      setColumnMap(guessColumnMap(hdr));
-                    }}
-                  >
-                    {headerOptions.map((i) => (
-                      <option key={i} value={i}>
-                        Row {i + 1}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              {columnMap ? (
-                <div className="grid gap-2 sm:grid-cols-3">
-                  {(["date", "description", "debit", "credit", "amount", "balance", "reference"] as const).map((key) => (
-                    <label key={key} className="text-xs capitalize">
-                      {key}
-                      <input
-                        type="number"
-                        min={0}
-                        className="mt-1 w-full rounded border border-slate-200 px-2 py-1 dark:border-slate-700 dark:bg-slate-950"
-                        value={columnMap[key] ?? ""}
-                        placeholder="—"
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setColumnMap((prev) => {
-                            if (!prev) return prev;
-                            const next = { ...prev };
-                            if (v === "") delete next[key];
-                            else (next as Record<string, number>)[key] = parseInt(v, 10);
-                            return next;
-                          });
-                        }}
-                      />
-                    </label>
-                  ))}
-                </div>
-              ) : null}
-              <div className="overflow-x-auto rounded border border-slate-100 dark:border-slate-800">
-                <table className="w-full min-w-[480px] text-left text-[10px]">
-                  <tbody>
-                    {tableSample.slice(0, 10).map((r, ri) => (
-                      <tr key={ri} className={ri === headerRowIndex ? "bg-amber-50 dark:bg-amber-950/30" : ""}>
-                        {r.slice(0, 12).map((c, ci) => (
-                          <td key={ci} className="border-b border-slate-100 px-1 py-0.5 dark:border-slate-800">
-                            {c}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <button
-                type="button"
-                disabled={busy || !columnMap}
-                onClick={() => void runParseFromTable()}
-                className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-slate-200 dark:text-slate-900"
-              >
-                Apply mapping & parse
-              </button>
-            </div>
-          ) : null}
-
-          {extract?.kind === "csv" && columnMap ? (
-            <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
-              <h3 className="text-sm font-semibold">CSV column mapping</h3>
-              <p className="text-xs text-slate-500 mb-2">Adjust indices if headers were not detected correctly.</p>
-              <div className="grid gap-2 sm:grid-cols-4">
-                {(["date", "description", "debit", "credit", "amount", "balance", "reference"] as const).map((key) => (
-                  <label key={key} className="text-xs capitalize">
-                    {key}
-                    <input
-                      type="number"
-                      min={0}
-                      className="mt-1 w-full rounded border border-slate-200 px-2 py-1 dark:border-slate-700 dark:bg-slate-950"
-                      value={columnMap[key] ?? ""}
-                      placeholder="—"
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setColumnMap((prev) => {
-                          if (!prev) return prev;
-                          const next = { ...prev };
-                          if (v === "") delete next[key];
-                          else (next as Record<string, number>)[key] = parseInt(v, 10);
-                          return next;
-                        });
-                      }}
-                    />
-                  </label>
-                ))}
-              </div>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void runParseCsvRemap()}
-                className="mt-3 rounded-xl bg-slate-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-              >
-                Re-parse CSV with mapping
-              </button>
-            </div>
-          ) : null}
-
           {parseWarnings.length ? (
             <ul className="list-inside list-disc rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
               {parseWarnings.map((w, i) => (

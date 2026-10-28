@@ -26,12 +26,12 @@ export default function SignInPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
-      const data = (await res.json()) as { error?: string };
+      const data = (await res.json()) as { error?: string; redirectTo?: string };
       if (!res.ok) {
         setError(data.error ?? "Could not sign in");
         return;
       }
-      router.push("/dashboard");
+      router.push(data.redirectTo === "/superadmin" ? "/superadmin" : "/dashboard");
       router.refresh();
     } catch {
       setError("Network error. Try again.");
